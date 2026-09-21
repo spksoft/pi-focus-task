@@ -68,9 +68,9 @@ The file should answer, as briefly as possible:
 - What is blocked or unresolved?
 - What exact action should happen next?
 
-Use ordinary Markdown headings and lists. Prefer a tolerant format over a strict parser so users and other agents can edit it safely. Never store secrets in it.
+`FOCUS_TASK.md` stores only that active Markdown description: no task identity, status template, extension metadata, or transcript. Use ordinary headings and lists when useful, but keep it tolerant so users and other agents can edit it safely. Never store secrets in it.
 
-“No active task” is a valid state. Do not force every small request into a persistent task.
+An empty `FOCUS_TASK.md` means no active task. Do not force every small request into a persistent task.
 
 ## Technical direction
 
@@ -139,9 +139,8 @@ It should require less effort than manually reconstructing context and add littl
 
 Before making repository changes, read `FOCUS_TASK.md` for the active development scope and constraints.
 
-- If it says there is no active task, use the user's current request as the scope.
-- If it describes an active task, keep work within that boundary.
-- Update it after material progress or decisions and before handing off unfinished work.
+- If it is empty, use the user's current request as the scope.
+- If it describes an active task, keep work within that boundary and update it after material progress or decisions before handing off unfinished work.
 - Do not turn it into a chat transcript or duplicate the durable project guidance in this file.
 
 ## Focus task context

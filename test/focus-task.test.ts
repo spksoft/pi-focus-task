@@ -277,6 +277,17 @@ test("init migrates legacy context and guidance without discarding unsaved task 
   assert.deepEqual(taskContext(empty), {});
 });
 
+test("init migrates old metadata out of FOCUS_TASK.md", t => {
+  const cwd = project(t);
+  const task = addTask(cwd, "Old active", "# Old active\n\nKeep this exact brief.\n");
+  saveCurrent(cwd, readFileSync(join(cwd, ".pi-focus-task", `${task.id}.md`), "utf8"));
+  initProject(cwd);
+  assert.equal(current(cwd), task.body);
+  assert.doesNotMatch(current(cwd), /^<!-- pi-focus-task/);
+  assert.equal(listTasks(cwd).active?.id, task.id);
+  assert.match(readFileSync(join(cwd, ".pi-focus-task", ".active"), "utf8"), new RegExp(task.id));
+});
+
 test("init rejects unsafe or oversized files without overwriting other setup targets", t => {
   const outside = join(project(t), "outside.md");
   writeFileSync(outside, "Keep this file.");
@@ -321,12 +332,16 @@ test("switch, edit, restart, complete, reopen and clear preserve Markdown", t =>
   const a = addTask(cwd, "Feature A");
   const b = addTask(cwd, "Feature B");
   focusTask(cwd, a.id);
+  assert.equal(current(cwd), a.body);
+  assert.doesNotMatch(current(cwd), /^<!-- pi-focus-task/);
   saveCurrent(cwd, current(cwd) + "\nDecision: use SQLite.\nNext: test the migration.\n");
   const aText = current(cwd);
   focusTask(cwd, a.id); // A same-task focus must not discard unsaved edits.
   assert.equal(current(cwd), aText);
   focusTask(cwd, b.id);
-  assert.equal(readFileSync(join(cwd, ".pi-focus-task", `${a.id}.md`), "utf8"), aText);
+  const archivedA = readFileSync(join(cwd, ".pi-focus-task", `${a.id}.md`), "utf8");
+  assert.match(archivedA, /^<!-- pi-focus-task: /);
+  assert.ok(archivedA.endsWith(aText));
   assert.doesNotMatch(current(cwd), /SQLite/);
   focusTask(cwd, a.id);
   assert.equal(current(cwd), aText);
@@ -346,6 +361,16 @@ test("switch, edit, restart, complete, reopen and clear preserve Markdown", t =>
   assert.equal(listTasks(cwd).active, undefined);
   assert.equal(clearTask(cwd), undefined);
   assert.throws(() => clearTask(cwd, true), /No managed/);
+});
+
+test("an empty FOCUS_TASK.md means no active focus", t => {
+  const cwd = project(t);
+  const task = addTask(cwd, "Keep saved", "# Keep saved\n");
+  focusTask(cwd, task.id);
+  saveCurrent(cwd, "");
+  assert.deepEqual(taskContext(cwd), {});
+  assert.equal(listTasks(cwd).active, undefined);
+  assert.ok(listTasks(cwd).tasks.some(saved => saved.id === task.id));
 });
 
 test("existing hand-written context is readable and backed up, not destroyed", t => {
@@ -390,10 +415,11 @@ test("invalid metadata, symlinks, locks and failed saves do not replace active c
   assert.throws(() => taskContext(cwd), /in progress/);
   rmSync(join(cwd, ".pi-focus-task", ".lock"), { recursive: true });
   saveCurrent(cwd, "<!-- pi-focus-task: broken -->\nMust not lose this.\n");
-  assert.throws(() => focusTask(cwd, b.id), /Invalid pi-focus-task metadata/);
+  assert.throws(() => focusTask(cwd, b.id), /old task metadata/);
   assert.match(current(cwd), /Must not lose/);
-  saveCurrent(cwd, before.replace(a.id, "../../escape"));
-  assert.throws(() => clearTask(cwd), /Invalid pi-focus-task metadata/);
+  saveCurrent(cwd, before);
+  writeFileSync(join(cwd, ".pi-focus-task", ".active"), '{"id":"../../escape"}\n');
+  assert.throws(() => clearTask(cwd), /Invalid active-task marker/);
   const other = project(t);
   symlinkSync(join(cwd, ".pi-focus-task"), join(other, ".pi-focus-task"));
   assert.throws(() => addTask(other, "Cross-project"), /real directory/);
@@ -417,11 +443,12 @@ test("size limits are byte-based and never truncate or overwrite task files", t 
   saveCurrent(cwd, NO_TASK);
   focusTask(cwd, a.id);
   const before = current(cwd);
-  assert.throws(() => editTask(cwd, listTasks(cwd).active!, "x".repeat(MAX_FILE_BYTES)), /256 KiB/);
+  assert.throws(() => editTask(cwd, listTasks(cwd).active!, "x".repeat(MAX_FILE_BYTES + 1)), /256 KiB/);
   assert.equal(current(cwd), before);
   editTask(cwd, listTasks(cwd).active!, "");
-  assert.equal(taskContext(cwd).task?.id, a.id);
-  assert.equal(taskContext(cwd).body, "");
+  assert.deepEqual(taskContext(cwd), {});
+  assert.equal(listTasks(cwd).active, undefined);
+  assert.ok(listTasks(cwd).tasks.some(task => task.id === a.id));
 });
 
 test("commands support pickers, cancel, editing, errors, completion and busy guards", async t => {

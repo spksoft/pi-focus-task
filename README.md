@@ -9,8 +9,8 @@ Your task lives in plain Markdown—not just the conversation:
 | File | Purpose |
 | --- | --- |
 | `AGENTS.md` | Durable project knowledge and instructions. |
-| `FOCUS_TASK.md` | The active task's scope, decisions, progress, and next step. |
-| `.pi-focus-task/` | Saved tasks you can switch between. |
+| `FOCUS_TASK.md` | Only the active task description: scope, decisions, progress, and next step. An empty file means no active task. |
+| `.pi-focus-task/` | Saved tasks and the small internal marker for the selected task. |
 
 No database, background service, build step, or additional runtime dependency. AI polishing is optional; raw saves never call a model.
 
@@ -116,7 +116,7 @@ Polishing accepts up to **16 KiB UTF-8** of input and output, with a **60-second
 
 ## Project setup and migration
 
-`/focus init` creates `FOCUS_TASK.md` with no active task, unless it already exists, and adds this instruction to `AGENTS.md`:
+`/focus init` creates an empty `FOCUS_TASK.md` (no active task), unless it already exists, and adds this instruction to `AGENTS.md`:
 
 > Before starting work, read FOCUS_TASK.md for the active scope and constraints.
 
@@ -124,7 +124,7 @@ Existing project instructions and briefs are preserved. Repeated initialization 
 
 Migrating from `CURRENT_TASK.md`:
 
-- If the new file is absent, initialization copies the legacy brief—including task identity—to `FOCUS_TASK.md` and updates filename references in `AGENTS.md`.
+- If the new file is absent, initialization copies the legacy brief to `FOCUS_TASK.md`, moves any old identity metadata into `.pi-focus-task/.active`, and updates filename references in `AGENTS.md`.
 - The original stays untouched as a backup. If both files exist, `FOCUS_TASK.md` wins and neither brief is overwritten.
 - Until migration, context loading and switching ask you to run `/focus init` rather than ignore legacy progress. Saved tasks in `.pi-focus-task/` need no migration.
 
@@ -135,16 +135,16 @@ After checking the migration, archive or remove the old file yourself. Only `FOC
 ```text
 project/
 ├── AGENTS.md
-├── FOCUS_TASK.md                    # authoritative while focused
+├── FOCUS_TASK.md                    # active task description only; empty = no focus
 └── .pi-focus-task/
+    ├── .active                       # selected saved task identity (internal)
     ├── <task-uuid>.md               # saved task briefs
     └── backups/<backup-uuid>.md     # previous unmanaged focus files
 ```
 
-A managed task has one identity comment followed by ordinary Markdown:
+`FOCUS_TASK.md` contains ordinary Markdown only—no identity comment, status heading, template, or required schema:
 
 ```markdown
-<!-- pi-focus-task: {"id":"a9e378eb-87b2-4d6b-9b75-d00acd60b84c","title":"Authentication","status":"open"} -->
 # Authentication
 
 ## Objective
@@ -154,11 +154,9 @@ Allow users to sign in.
 Test expired tokens.
 ```
 
-**Preserve the first line.** The body has no required headings or schema. While a task is active, edit `FOCUS_TASK.md`, not its saved copy. The saved copy is updated when switching, clearing, or completing. Inactive task files can be edited directly.
+While a task is active, edit `FOCUS_TASK.md`, not its saved copy. The extension keeps the selected saved-task identity in `.pi-focus-task/.active` and updates its saved copy when switching, clearing, or completing. The body has no required headings; keep only what the next model call needs to continue.
 
-The active file's identity comment is the focus pointer; there is no separate index. The extension refreshes context from disk but does not automatically summarize your conversation—keep the brief current as work progresses.
-
-A hand-written `FOCUS_TASK.md` works without importing it. The first explicit switch backs it up under `backups/` and reports the path. Clear/done never erase an unmanaged brief. To restore a backup, clear any managed focus first, then copy the backup to `FOCUS_TASK.md`.
+A completely empty `FOCUS_TASK.md` means no active focus and injects no task context. A hand-written nonempty file also works without importing it. The first explicit switch backs it up under `backups/` and reports the path. Clear/done never erase an unmanaged brief. To restore a backup, clear any managed focus first, then copy the backup to `FOCUS_TASK.md`.
 
 ### Privacy and version control
 
@@ -177,7 +175,7 @@ FOCUS_TASK.md
 - Includes only the active brief, not the task list, and shows its title in Pi's status area.
 - Preserves other extensions' prompt sections. Briefs are delimited as task data, not permission to override the user's latest request.
 - Limits automatically injected bodies to **16 KiB UTF-8**. Oversized context produces an unavailable-context notice; it is never silently truncated.
-- Rejects files over **256 KiB**, malformed metadata, unsafe IDs, and symlinked task paths. Initialization also bounds `AGENTS.md` to 256 KiB.
+- Rejects files over **256 KiB**, malformed saved-task metadata or active markers, unsafe IDs, and symlinked task paths. Initialization also bounds `AGENTS.md` to 256 KiB.
 - Allows ordinary Pi use without an active task. Read errors are reported without replacing files.
 
 **Use one active writer per project.** Commands use a short-lived `.pi-focus-task/.lock` directory and atomic replacement, but external editors do not honor that lock. Edits are checked against the original brief before saving to avoid overwriting newer work.
