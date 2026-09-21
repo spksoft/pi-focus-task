@@ -1,0 +1,20 @@
+{
+  "name": "pi-focus-task",
+  "version": "0.1.0",
+  "description": "Keep a project-local task list and one focused task across Pi sessions.",
+  "type": "module",
+  "keywords": ["pi-package", "pi-extension", "tasks", "context"],
+  "files": ["index.ts", "store.ts", "README.md"],
+  "pi": { "extensions": ["./index.ts"] },
+  "engines": { "node": ">=22.19.0" },
+  "peerDependencies": { "@earendil-works/pi-coding-agent": "*" },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "0.86.1",
+    "@types/node": "^22.19.19",
+    "typescript": "^5.9.3"
+  },
+  "scripts": {
+    "check": "tsc --noEmit",
+    "test": "node --experimental-strip-types --test test/*.test.ts"
+  }
+}
