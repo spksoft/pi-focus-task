@@ -38,7 +38,7 @@ Do not make session JSONL, extension-only state, a database, or a proprietary fo
 
 ### The user owns task scope
 
-The extension may help read, create, update, or close the active task, but it must not silently replace an unfinished task or invent decisions. Explicit user instructions take precedence.
+The extension may help read, create, update, switch, or explicitly delete tasks, but it must not silently replace or delete a task or invent decisions. Explicit user instructions take precedence.
 
 ### Context must stay small and actionable
 
@@ -50,7 +50,7 @@ The first useful version should:
 
 1. Provide `/focus init` to create `FOCUS_TASK.md` and idempotently add its read instruction to `AGENTS.md`, preserving existing content. Read the project-local `FOCUS_TASK.md`.
 2. Tell the agent in `AGENTS.md` to read `FOCUS_TASK.md` before work begins; do not inject task messages or prompt sections.
-3. Provide a small, explicit workflow to start, inspect, update, complete, or switch the focus task.
+3. Provide a small, explicit workflow to add, inspect, edit, switch, or delete a focus task. Tasks have no completion state.
 4. Preserve the task in `FOCUS_TASK.md` across new sessions and Pi compaction.
 5. Keep the file directly editable and understandable without the extension.
 6. Fail clearly on missing, unreadable, or oversized task context without blocking unrelated Pi usage.

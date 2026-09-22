@@ -1,17 +1,16 @@
 import { randomUUID } from "node:crypto";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { addTask, clearTask, editTask, findTask, focusTask, initProject, listTasks, MAX_CONTEXT_BYTES, validateTitle } from "./store.ts";
+import { addTask, deleteTask, editTask, findTask, focusTask, initProject, listTasks, MAX_CONTEXT_BYTES, validateTitle } from "./store.ts";
 const HELP = [
   "/focus init — set up AGENTS.md and FOCUS_TASK.md without overwriting existing context",
   "/focus add [--raw|--polish] <brief> — create a task; choose raw text or AI polish",
-  "/focus switch [id|title] — switch focus (picker if omitted); reopens completed tasks",
+  "/focus switch [id|title] — switch focus (picker if omitted)",
   "/focus list — show saved tasks and active focus",
   "/focus edit [--raw|--polish] [brief] — edit the active brief; choose raw text or AI polish",
-  "/focus done — complete the active task and clear focus",
-  "/focus clear — save the active task and clear focus without completing it",
+  "/focus delete <id|title> — permanently delete a saved task",
   "/focus help — show this help",
 ].join("\n");
-const ACTIONS = ["init", "add", "switch", "list", "edit", "done", "clear", "help"];
+const ACTIONS = ["init", "add", "switch", "list", "edit", "delete", "help"];
 function report(ctx: ExtensionContext, text: string, level: "info" | "warning" | "error" = "info") {
   if (ctx.hasUI) ctx.ui.notify(text, level);
   else process.stderr.write(`[pi-focus-task] ${text}\n`);
@@ -106,7 +105,7 @@ export default function focusTaskExtension(pi: ExtensionAPI) {
   pi.on("session_shutdown", () => { disposed = true; polishing?.abort(); });
 
   pi.registerCommand("focus", {
-    description: "Manage project focus tasks: init, add, switch, list, edit, done, clear",
+    description: "Manage project focus tasks: init, add, switch, list, edit, delete",
     getArgumentCompletions(prefix) {
       const options = [...ACTIONS, "add --raw", "add --polish", "edit --raw", "edit --polish"];
       const matches = options.filter(action => action.startsWith(prefix)).map(action => ({ value: action, label: action }));
@@ -117,7 +116,7 @@ export default function focusTaskExtension(pi: ExtensionAPI) {
       try {
         if (action === "help") { report(ctx, HELP); return; }
         if (!ACTIONS.includes(action)) throw new Error(`Unknown task action: ${action}\n${HELP}`);
-        if (!["add", "switch", "edit"].includes(action) && argument.trim()) throw new Error(`/focus ${action} does not accept arguments.`);
+        if (!["add", "switch", "edit", "delete"].includes(action) && argument.trim()) throw new Error(`/focus ${action} does not accept arguments.`);
         if (action !== "list") requireIdle(ctx);
 
         switch (action) {
@@ -148,7 +147,7 @@ export default function focusTaskExtension(pi: ExtensionAPI) {
             let query = argument.trim();
             if (!query) {
               if (!ctx.hasUI) throw new Error("Usage: /focus switch <id|title>");
-              const options = tasks.map(task => `${task.id.slice(0, 8)} [${task.id === active?.id ? "focus" : task.status}] ${task.title}`);
+              const options = tasks.map(task => `${task.id.slice(0, 8)} ${task.id === active?.id ? "* " : ""}${task.title}`);
               const selected = await ctx.ui.select("Focus a task", options);
               if (selected === undefined) return;
               query = tasks[options.indexOf(selected)]?.id ?? "";
@@ -160,7 +159,7 @@ export default function focusTaskExtension(pi: ExtensionAPI) {
           }
           case "list": {
             const { tasks, active } = listTasks(ctx.cwd);
-            const lines = tasks.slice(0, 50).map(task => `${task.id === active?.id ? "*" : "-"} ${task.id.slice(0, 8)} [${task.status}] ${task.title}`);
+            const lines = tasks.slice(0, 50).map(task => `${task.id === active?.id ? "*" : "-"} ${task.id.slice(0, 8)} ${task.title}`);
             report(ctx, lines.length ? `${lines.join("\n")}\n${tasks.length} task(s). * = focus${tasks.length > 50 ? "; showing first 50 — all files are in .pi-focus-task/" : ""}` : "No saved tasks. Use /focus add <title>.");
             break;
           }
@@ -178,10 +177,14 @@ export default function focusTaskExtension(pi: ExtensionAPI) {
             report(ctx, "Updated FOCUS_TASK.md.");
             break;
           }
-          case "done":
-          case "clear": {
-            const task = clearTask(ctx.cwd, action === "done");
-            report(ctx, task ? `${action === "done" ? "Completed" : "Saved"} ${task.title}. Focus cleared.` : "No managed focus task; FOCUS_TASK.md was left unchanged.");
+          case "delete": {
+            const { tasks } = listTasks(ctx.cwd);
+            if (!argument.trim()) throw new Error("Usage: /focus delete <id|title>");
+            const task = findTask(tasks, argument);
+            if (ctx.hasUI && await ctx.ui.select(`Permanently delete ${task.title}?`, ["Delete", "Cancel"]) !== "Delete") return;
+            requireIdle(ctx);
+            deleteTask(ctx.cwd, task.id);
+            report(ctx, `Deleted ${task.id.slice(0, 8)} — ${task.title}.`);
             break;
           }
         }

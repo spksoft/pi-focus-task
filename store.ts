@@ -15,8 +15,9 @@ const ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const PREFIX = "<!-- pi-focus-task: ";
 const ACTIVE = ".active";
 
-export type Task = { id: string; title: string; status: "open" | "done"; body: string };
+export type Task = { id: string; title: string; body: string };
 type TaskInfo = Omit<Task, "body">;
+type LegacyTask = Task & { status?: "open" | "done" };
 
 function paths(cwd: string) {
   const root = realpathSync(cwd);
@@ -74,24 +75,25 @@ export function validateTitle(title: string) {
 
 function taskInfo(data: unknown): TaskInfo {
   if (!data || typeof data !== "object") throw new Error();
-  const { id, title, status } = data as Partial<TaskInfo>;
+  const { id, title, status } = data as Partial<LegacyTask>;
   if (typeof id !== "string" || !ID.test(id) || typeof title !== "string" ||
-      validateTitle(title) !== title || (status !== "open" && status !== "done")) throw new Error();
-  return { id, title, status };
+      validateTitle(title) !== title || (status !== undefined && status !== "open" && status !== "done")) throw new Error();
+  return { id, title };
 }
 
 function encode(task: Task) {
-  const { id, title, status } = task;
-  return `${PREFIX}${JSON.stringify({ id, title, status })} -->\n${task.body}`;
+  const { id, title } = task;
+  return `${PREFIX}${JSON.stringify({ id, title })} -->\n${task.body}`;
 }
 
-function decode(text: string, path: string): Task | undefined {
+function decode(text: string, path: string): LegacyTask | undefined {
   if (!text.startsWith("<!-- pi-focus-task")) return undefined;
   const newline = text.indexOf("\n");
   const header = (newline < 0 ? text : text.slice(0, newline)).trimEnd();
   try {
     if (!header.startsWith(PREFIX) || !header.endsWith(" -->")) throw new Error();
-    return { ...taskInfo(JSON.parse(header.slice(PREFIX.length, -4))), body: newline < 0 ? "" : text.slice(newline + 1) };
+    const data = JSON.parse(header.slice(PREFIX.length, -4));
+    return { ...taskInfo(data), body: newline < 0 ? "" : text.slice(newline + 1), status: data.status };
   } catch {
     throw new Error(`Invalid pi-focus-task metadata: ${path}`);
   }
@@ -124,7 +126,7 @@ function noTask(text: string | undefined) {
   return text === undefined || !text.trim() || text === OLD_NO_TASK || text === LEGACY_NO_TASK;
 }
 
-function readCurrent(dir: string, current: string, activePath: string) {
+function readCurrent(current: string, activePath: string) {
   const text = read(current);
   if (text === undefined && stat(join(dirname(current), "CURRENT_TASK.md"))) {
     throw new Error("Found CURRENT_TASK.md. Run /focus init to migrate its context to FOCUS_TASK.md first.");
@@ -135,7 +137,6 @@ function readCurrent(dir: string, current: string, activePath: string) {
   }
   const active = readActive(activePath);
   if (!active) return { text, task: undefined };
-  if (active.status === "done") throw new Error("The active-task marker is marked done. Run /focus init to repair it.");
   return { text, task: { ...active, body: text! } };
 }
 
@@ -172,7 +173,7 @@ export function initProject(cwd: string) {
 
     if (oldTask) {
       atomicWrite(taskPath(dir, oldTask.id), encode(oldTask));
-      if (oldTask.status === "open") {
+      if (oldTask.status !== "done") {
         atomicWrite(current, oldTask.body);
         writeActive(active, oldTask);
       } else {
@@ -193,13 +194,13 @@ export function listTasks(cwd: string): { tasks: Task[]; active?: Task } {
   const { dir, current, active: activePath } = paths(cwd);
   const exists = directory(dir);
   if (exists && stat(join(dir, ".lock"))) throw new Error("A task operation is in progress; try again shortly.");
-  const { task: active } = readCurrent(dir, current, activePath);
+  const { task: active } = readCurrent(current, activePath);
   // ponytail: scan small local task lists; add an index only if thousands of tasks make this slow.
   const tasks = exists ? readdirSync(dir).filter(name => ID.test(name.slice(0, -3)) && name.endsWith(".md")).map(name => {
     const path = join(dir, name);
     const task = decode(read(path) ?? "", path);
     if (!task || `${task.id}.md` !== name) throw new Error(`Invalid task file: ${path}`);
-    return task;
+    return { id: task.id, title: task.title, body: task.body };
   }) : [];
   if (active) {
     const index = tasks.findIndex(task => task.id === active.id);
@@ -214,7 +215,7 @@ export function addTask(cwd: string, title: string, body?: string): Task {
   title = validateTitle(title);
   return locked(cwd, dir => {
     const task: Task = {
-      id: randomUUID(), title, status: "open",
+      id: randomUUID(), title,
       body: body ?? `# ${title}\n\n## Objective\n${title}\n\n## Scope and constraints\n\n## Decisions\n\n## Progress and validation\n\n## Blockers\n\n## Next step\n`,
     };
     const text = encode(task);
@@ -246,12 +247,12 @@ function preserve(dir: string, text: string | undefined, task: Task | undefined)
 
 export function focusTask(cwd: string, id: string): { task: Task; backup?: string } {
   return locked(cwd, (dir, current, activePath) => {
-    const { text, task: previous } = readCurrent(dir, current, activePath);
+    const { text, task: previous } = readCurrent(current, activePath);
     if (previous?.id === id) return { task: previous };
     const path = taskPath(dir, id);
-    const task = decode(read(path) ?? "", path);
-    if (!task || task.id !== id) throw new Error(`Task not found or invalid: ${id}`);
-    task.status = "open"; // Explicitly focusing a completed task reopens it.
+    const saved = decode(read(path) ?? "", path);
+    if (!saved || saved.id !== id) throw new Error(`Task not found or invalid: ${id}`);
+    const task: Task = { id: saved.id, title: saved.title, body: saved.body };
     const backup = preserve(dir, text, previous);
     atomicWrite(current, task.body);
     writeActive(activePath, task);
@@ -259,24 +260,25 @@ export function focusTask(cwd: string, id: string): { task: Task; backup?: strin
   });
 }
 
-export function clearTask(cwd: string, done = false): Task | undefined {
+export function deleteTask(cwd: string, id: string): Task {
   return locked(cwd, (dir, current, activePath) => {
-    const { text, task } = readCurrent(dir, current, activePath);
-    if (!task) {
-      if (done) throw new Error("No managed focus task. Use /focus switch first.");
-      if (noTask(text)) clearActive(activePath);
-      return undefined; // Never clear an unowned FOCUS_TASK.md.
+    const { task: active } = readCurrent(current, activePath);
+    const path = taskPath(dir, id);
+    const saved = decode(read(path) ?? "", path);
+    if (!saved || saved.id !== id) throw new Error(`Task not found or invalid: ${id}`);
+    const task: Task = { id: saved.id, title: saved.title, body: active?.id === id ? active.body : saved.body };
+    if (readActive(activePath)?.id === id) {
+      if (active) atomicWrite(current, NO_TASK);
+      clearActive(activePath);
     }
-    preserve(dir, undefined, { ...task, status: done ? "done" : "open" });
-    atomicWrite(current, NO_TASK);
-    clearActive(activePath);
+    unlinkSync(path);
     return task;
   });
 }
 
 export function editTask(cwd: string, expected: Task, body: string) {
   return locked(cwd, (dir, current, activePath) => {
-    const { text, task } = readCurrent(dir, current, activePath);
+    const { text, task } = readCurrent(current, activePath);
     if (!task || task.id !== expected.id || text !== expected.body) {
       throw new Error("Focus or task contents changed while editing. Reopen /focus edit; no changes were overwritten.");
     }

@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 import { test, type TestContext } from "node:test";
 import type { ExtensionAPI, ExtensionCommandContext, RegisteredCommand } from "@earendil-works/pi-coding-agent";
 import extension from "../index.ts";
-import { addTask, clearTask, editTask, findTask, focusTask, initProject, listTasks, MAX_CONTEXT_BYTES, MAX_FILE_BYTES, NO_TASK } from "../store.ts";
+import { addTask, deleteTask, editTask, findTask, focusTask, initProject, listTasks, MAX_CONTEXT_BYTES, MAX_FILE_BYTES, NO_TASK } from "../store.ts";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -276,6 +276,19 @@ test("init migrates old metadata out of FOCUS_TASK.md", t => {
   assert.doesNotMatch(current(cwd), /^<!-- pi-focus-task/);
   assert.equal(listTasks(cwd).active?.id, task.id);
   assert.match(readFileSync(join(cwd, ".pi-focus-task", ".active"), "utf8"), new RegExp(task.id));
+  assert.doesNotMatch(readFileSync(join(cwd, ".pi-focus-task", `${task.id}.md`), "utf8"), /"status"/);
+});
+
+test("legacy completed tasks remain saved without status and are not activated", t => {
+  const cwd = project(t);
+  const task = addTask(cwd, "Old done", "# Finished\n");
+  saveCurrent(cwd, `<!-- pi-focus-task: ${JSON.stringify({ id: task.id, title: task.title, status: "done" })} -->\n${task.body}`);
+  initProject(cwd);
+  assert.equal(current(cwd), NO_TASK);
+  assert.deepEqual(listTasks(cwd).tasks, [task]);
+  assert.equal(listTasks(cwd).active, undefined);
+  focusTask(cwd, task.id);
+  assert.deepEqual(listTasks(cwd).active, task);
 });
 
 test("init rejects unsafe or oversized files without overwriting other setup targets", t => {
@@ -316,7 +329,7 @@ test("empty projects stay untouched; titles and selectors are validated", t => {
   assert.throws(() => findTask([a, { ...b, title: a.title }], a.title), /Ambiguous/);
 });
 
-test("switch, edit, restart, complete, reopen and clear preserve Markdown", t => {
+test("switch, edit, restart and delete preserve other Markdown", t => {
   const cwd = project(t);
   const a = addTask(cwd, "Feature A");
   const b = addTask(cwd, "Feature B");
@@ -339,17 +352,15 @@ test("switch, edit, restart, complete, reopen and clear preserve Markdown", t =>
   editTask(cwd, snapshot, "# Updated brief\nNext: implement validation.\n");
   assert.match(current(cwd), /Updated brief/);
   assert.throws(() => editTask(cwd, snapshot, "stale"), /changed while editing/);
-  clearTask(cwd, true);
-  assert.equal(current(cwd), NO_TASK);
-  assert.equal(listTasks(cwd).tasks.find(task => task.id === a.id)?.status, "done");
-  focusTask(cwd, a.id);
-  assert.equal(listTasks(cwd).active?.status, "open");
+  deleteTask(cwd, b.id);
+  assert.equal(listTasks(cwd).active?.id, a.id);
   assert.match(current(cwd), /Updated brief/);
-  clearTask(cwd);
-  assert.equal(listTasks(cwd).tasks.find(task => task.id === a.id)?.status, "open");
-  assert.equal(listTasks(cwd).active, undefined);
-  assert.equal(clearTask(cwd), undefined);
-  assert.throws(() => clearTask(cwd, true), /No managed/);
+  assert.equal(listTasks(cwd).tasks.length, 1);
+  deleteTask(cwd, a.id);
+  assert.equal(current(cwd), NO_TASK);
+  assert.deepEqual(listTasks(cwd), { tasks: [], active: undefined });
+  assert.throws(() => deleteTask(cwd, a.id), /not found/);
+  assert.equal(existsSync(join(cwd, ".pi-focus-task", ".active")), false);
 });
 
 test("an empty FOCUS_TASK.md means no active focus", t => {
@@ -366,11 +377,13 @@ test("existing hand-written context is readable and backed up, not destroyed", t
   const original = "# Important work\nPreserve this exact brief.\n";
   saveCurrent(cwd, original);
   assert.equal(current(cwd), original);
-  assert.equal(clearTask(cwd), undefined);
   assert.equal(current(cwd), original);
   const a = addTask(cwd, "New work");
   assert.equal(current(cwd), original);
-  const result = focusTask(cwd, a.id);
+  deleteTask(cwd, a.id);
+  assert.equal(current(cwd), original); // An unmanaged brief is never deleted with a saved task.
+  const replacement = addTask(cwd, "New work");
+  const result = focusTask(cwd, replacement.id);
   assert.ok(result.backup);
   assert.equal(readFileSync(result.backup, "utf8"), original);
   const other = project(t);
@@ -397,6 +410,8 @@ test("invalid metadata, symlinks, locks and failed saves do not replace active c
   assert.throws(() => focusTask(cwd, b.id), /non-regular/);
   assert.equal(readFileSync(outside, "utf8"), "untouched");
   assert.equal(current(cwd), before);
+  assert.throws(() => deleteTask(cwd, a.id), /regular file/);
+  assert.equal(current(cwd), before);
   rmSync(archived);
   mkdirSync(join(cwd, ".pi-focus-task", ".lock"));
   assert.throws(() => addTask(cwd, "Locked"), /Another task operation/);
@@ -407,7 +422,7 @@ test("invalid metadata, symlinks, locks and failed saves do not replace active c
   assert.match(current(cwd), /Must not lose/);
   saveCurrent(cwd, before);
   writeFileSync(join(cwd, ".pi-focus-task", ".active"), '{"id":"../../escape"}\n');
-  assert.throws(() => clearTask(cwd), /Invalid active-task marker/);
+  assert.throws(() => deleteTask(cwd, a.id), /Invalid active-task marker/);
   const other = project(t);
   symlinkSync(join(cwd, ".pi-focus-task"), join(other, ".pi-focus-task"));
   assert.throws(() => addTask(other, "Cross-project"), /real directory/);
@@ -435,7 +450,7 @@ test("size limits are byte-based and never truncate or overwrite task files", t 
   assert.ok(listTasks(cwd).tasks.some(task => task.id === a.id));
 });
 
-test("commands support pickers, cancel, editing, errors, completion and busy guards", async t => {
+test("commands support pickers, cancel, editing, deletion and busy guards", async t => {
   const cwd = project(t);
   const h = harness(cwd);
   assert.deepEqual(h.completions("in"), [{ value: "init", label: "init" }]);
@@ -465,11 +480,14 @@ test("commands support pickers, cancel, editing, errors, completion and busy gua
   await h.run("edit --raw");
   assert.match(current(cwd), /Edited/);
   await h.run("list");
-  assert.match(h.notices.at(-1)!, /\* .*\[open\] Second task/);
+  assert.match(h.notices.at(-1)!, /\* .*Second task/);
+  assert.doesNotMatch(h.notices.at(-1)!, /\[open\]|\[done\]/);
   await h.run("help");
   assert.match(h.notices.at(-1)!, /focus switch/);
-  await h.run("done extra");
-  assert.match(h.notices.at(-1)!, /does not accept/);
+  await h.run("delete");
+  assert.match(h.notices.at(-1)!, /Usage: \/focus delete/);
+  await h.run("done");
+  assert.match(h.notices.at(-1)!, /Unknown task action/);
   await h.run("whoops");
   assert.match(h.notices.at(-1)!, /Unknown task action/);
   h.busy(true);
@@ -487,11 +505,15 @@ test("commands support pickers, cancel, editing, errors, completion and busy gua
   assert.match(h.notices.at(-1)!, /Wait for Pi/);
   assert.doesNotMatch(current(cwd), /should not save/);
   h.busy(false);
-  await h.run("done");
+  h.ctx.ui.select = async () => "Cancel";
+  await h.run("delete Second task");
+  assert.equal(listTasks(cwd).active?.title, "Second task");
+  h.ctx.ui.select = async () => "Delete";
+  await h.run("delete First task");
+  assert.equal(listTasks(cwd).active?.title, "Second task");
+  await h.run("delete Second task");
   assert.equal(listTasks(cwd).active, undefined);
-  await h.run("switch Second task");
-  await h.run("clear");
-  assert.equal(listTasks(cwd).tasks.find(task => task.title === "Second task")?.status, "open");
+  assert.equal(current(cwd), NO_TASK);
 });
 
 test("the extension registers only file-operation commands, never context injection", async t => {
@@ -541,12 +563,11 @@ test("real Pi CLI coexists with /task and persists focus lifecycle across proces
   command("/focus switch Feature A");
   assert.match(current(cwd), /Runtime handoff checkpoint/);
   assert.match(command("/focus list"), /\* .*Feature A/);
-  assert.match(command("/focus done"), /Completed/);
-  assert.match(command("/focus list"), /\[done\] Feature A/);
-  command("/focus switch Feature A");
-  assert.match(command("/focus clear"), /Saved/);
+  assert.match(command("/focus delete Feature A"), /Deleted/);
   assert.equal(current(cwd), NO_TASK);
-  assert.match(command("/focus switch"), /Usage: \/focus switch/);
+  assert.doesNotMatch(command("/focus list"), /Feature A/);
+  assert.match(command("/focus delete เพิ่มฟีเจอร์ B"), /Deleted/);
+  assert.match(command("/focus switch"), /No tasks yet/);
   assert.match(command("/focus edit"), /Edit FOCUS_TASK.md directly/);
 });
 
