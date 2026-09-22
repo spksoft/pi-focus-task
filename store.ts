@@ -283,12 +283,3 @@ export function editTask(cwd: string, expected: Task, body: string) {
     atomicWrite(current, body);
   });
 }
-
-export function taskContext(cwd: string): { task?: Task; body?: string } {
-  const { dir, current, active } = paths(cwd);
-  if (directory(dir) && stat(join(dir, ".lock"))) throw new Error("A task operation is in progress; context was not loaded.");
-  const { text, task } = readCurrent(dir, current, active);
-  if (noTask(text)) return {};
-  if (Buffer.byteLength(text!) > MAX_CONTEXT_BYTES) throw new Error("FOCUS_TASK.md exceeds the 16 KiB context limit. Shorten it; the file has not been changed.");
-  return { task, body: text! };
-}

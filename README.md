@@ -126,7 +126,7 @@ Migrating from `CURRENT_TASK.md`:
 
 - If the new file is absent, initialization copies the legacy brief to `FOCUS_TASK.md`, moves any old identity metadata into `.pi-focus-task/.active`, and updates filename references in `AGENTS.md`.
 - The original stays untouched as a backup. If both files exist, `FOCUS_TASK.md` wins and neither brief is overwritten.
-- Until migration, context loading and switching ask you to run `/focus init` rather than ignore legacy progress. Saved tasks in `.pi-focus-task/` need no migration.
+- Until migration, listing and switching ask you to run `/focus init` rather than ignore legacy progress. Saved tasks in `.pi-focus-task/` need no migration.
 
 After checking the migration, archive or remove the old file yourself. Only `FOCUS_TASK.md` is used going forward.
 
@@ -154,9 +154,9 @@ Allow users to sign in.
 Test expired tokens.
 ```
 
-While a task is active, edit `FOCUS_TASK.md`, not its saved copy. The extension keeps the selected saved-task identity in `.pi-focus-task/.active` and updates its saved copy when switching, clearing, or completing. The body has no required headings; keep only what the next model call needs to continue.
+While a task is active, edit `FOCUS_TASK.md`, not its saved copy. The extension keeps the selected saved-task identity in `.pi-focus-task/.active` and updates its saved copy when switching, clearing, or completing. The body has no required headings; keep only what is needed to resume work.
 
-A completely empty `FOCUS_TASK.md` means no active focus and injects no task context. A hand-written nonempty file also works without importing it. The first explicit switch backs it up under `backups/` and reports the path. Clear/done never erase an unmanaged brief. To restore a backup, clear any managed focus first, then copy the backup to `FOCUS_TASK.md`.
+A completely empty `FOCUS_TASK.md` means no active focus. A hand-written nonempty file also works without importing it. The first explicit switch backs it up under `backups/` and reports the path. Clear/done never erase an unmanaged brief. To restore a backup, clear any managed focus first, then copy the backup to `FOCUS_TASK.md`.
 
 ### Privacy and version control
 
@@ -167,16 +167,13 @@ Choose whether task files belong in Git. For private local notes, add these entr
 FOCUS_TASK.md
 ```
 
-**Do not store secrets in briefs.** Active context is sent to your configured model, and AI polishing sends the supplied draft. Markdown remains readable by humans and other coding harnesses without the extension.
+**Do not store secrets in briefs.** An agent following `AGENTS.md` may read the brief, and AI polishing sends the supplied draft to the selected model. Markdown remains readable by humans and other coding harnesses without the extension.
 
-## Context and safety
+## Safety
 
-- Reads the active brief before **each agent model call**, including after automatic compaction. Context snapshots are ephemeral, not duplicate entries in saved chat history.
-- Includes only the active brief, not the task list, and shows its title in Pi's status area.
-- Preserves other extensions' prompt sections. Briefs are delimited as task data, not permission to override the user's latest request.
-- Limits automatically injected bodies to **16 KiB UTF-8**. Oversized context produces an unavailable-context notice; it is never silently truncated.
+- The extension never injects model messages or prompt sections. `AGENTS.md` tells the agent to read `FOCUS_TASK.md` when starting work; `/focus init` adds that instruction once.
 - Rejects files over **256 KiB**, malformed saved-task metadata or active markers, unsafe IDs, and symlinked task paths. Initialization also bounds `AGENTS.md` to 256 KiB.
-- Allows ordinary Pi use without an active task. Read errors are reported without replacing files.
+- Allows ordinary Pi use without an active task; file-operation errors are reported without replacing files.
 
 **Use one active writer per project.** Commands use a short-lived `.pi-focus-task/.lock` directory and atomic replacement, but external editors do not honor that lock. Edits are checked against the original brief before saving to avoid overwriting newer work.
 
@@ -209,8 +206,8 @@ npm test
 npm pack --dry-run
 ```
 
-- `index.ts` — commands, authoring dialogs, status, and context hooks.
+- `index.ts` — commands and authoring dialogs.
 - `store.ts` — initialization, Markdown persistence, transitions, and validation.
 - `test/focus-task.test.ts` — storage, authoring, command, and integration checks.
 
-Tests use Node's built-in runner, temporary projects, an isolated real Pi CLI, and a loopback-only model stub. They exercise actual compaction and AI-polish requests without provider credentials or changes to your Pi settings.
+Tests use Node's built-in runner, temporary projects, an isolated real Pi CLI, and a loopback-only model stub. They check command behavior and AI-polish requests without provider credentials or changes to your Pi settings.

@@ -49,9 +49,9 @@ The task file is a brief, not a transcript. Preserve facts needed to resume work
 The first useful version should:
 
 1. Provide `/focus init` to create `FOCUS_TASK.md` and idempotently add its read instruction to `AGENTS.md`, preserving existing content. Read the project-local `FOCUS_TASK.md`.
-2. Make an active task available to the agent before work begins.
+2. Tell the agent in `AGENTS.md` to read `FOCUS_TASK.md` before work begins; do not inject task messages or prompt sections.
 3. Provide a small, explicit workflow to start, inspect, update, complete, or switch the focus task.
-4. Preserve the task across new sessions and Pi compaction.
+4. Preserve the task in `FOCUS_TASK.md` across new sessions and Pi compaction.
 5. Keep the file directly editable and understandable without the extension.
 6. Fail clearly on missing, unreadable, or oversized task context without blocking unrelated Pi usage.
 
@@ -77,12 +77,12 @@ An empty `FOCUS_TASK.md` means no active task. Do not force every small request 
 - Implement the product as a TypeScript Pi extension and distributable Pi package.
 - Use the official `@earendil-works/pi-coding-agent` extension API.
 - Prefer Node.js built-ins and Pi's bundled packages; add runtime dependencies only when they remove more complexity than they add.
-- Use `before_agent_start` for a dedicated guidance section, and the `context` event for a bounded, fresh task snapshot before every model call, including after compaction. Do not replace the full system prompt.
+- Do not inject task text, empty-task messages, or guidance into model context. `/focus init` maintains the `AGENTS.md` read instruction; agent file reads provide task context when needed.
 - Use extension commands for user-driven lifecycle actions. Add a model-callable tool only when the agent genuinely needs to perform an action autonomously.
 - Read from disk when fresh state matters. Avoid watchers, daemons, caches, and background resources until measured need exists.
 - Let Pi own sessions and compaction. The extension preserves task continuity; it is not a replacement compaction engine.
 - Keep the basic workflow deterministic. Creation and editing offer raw input or opt-in AI polishing with the selected Pi model; raw saves must preserve the supplied body exactly and never call a model. Review polished output interactively before saving, and never alter task identity or invent task facts.
-- Bound injected content and clearly delimit it from extension instructions.
+- Bound files and model calls used for optional polishing; never inject file contents automatically.
 - Support non-interactive Pi modes where practical; never assume TUI-only UI is available without checking the runtime context.
 
 ## Non-goals
@@ -123,15 +123,15 @@ It should require less effort than manually reconstructing context and add littl
 
 - Consult the installed Pi documentation and extension examples before using or changing Pi APIs.
 - Keep file I/O safe: validate paths, avoid destructive overwrites, and preserve user-authored content whenever possible.
-- Test task-state transitions, prompt injection, raw saves, and AI-polish approval/cancellation/failure paths with the smallest meaningful automated checks.
+- Test task-state transitions, absence of model-context injection, raw saves, and AI-polish approval/cancellation/failure paths with the smallest meaningful automated checks.
 - Keep extension output concise and avoid exposing full task contents in logs or UI notifications.
 - Package Pi-provided imports as peer dependencies and place actual runtime libraries in `dependencies`.
 
 ## Repository layout and checks
 
-- `index.ts`: `/focus` commands, focus status, and Pi context hooks.
+- `index.ts`: `/focus` file-operation commands and optional authoring dialogs.
 - `store.ts`: project initialization, Markdown persistence, focus transitions, backups, and validation.
-- `test/focus-task.test.ts`: storage, command, context, and real Pi CLI checks.
+- `test/focus-task.test.ts`: storage, command, and real Pi CLI checks.
 - `README.md`: installation, workflow, storage contract, and limitations.
 - Run `npm ci`, `npm run check`, and `npm test` before handing off code changes.
 
