@@ -1,14 +1,14 @@
 import { randomUUID } from "node:crypto";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { addTask, clearFocus, deleteTask, editTask, findTask, focusTask, initProject, listTasks, MAX_CONTEXT_BYTES, validateTitle } from "./store.ts";
+import { addTask, clearFocus, deleteTask, editTask, findTask, focusTask, focusedBrief, initProject, listTasks, MAX_CONTEXT_BYTES, validateTitle } from "./store.ts";
 const HELP = [
-  "/focus init — set up AGENTS.md and FOCUS_TASK.md without overwriting existing context",
+  "/focus init — set up private task storage; migrate an old brief if present",
   "/focus add [--raw|--polish] <brief> — create a task; choose raw text or AI polish",
   "/focus switch [id|title] — switch focus (picker if omitted)",
   "/focus list — show saved tasks and active focus",
   "/focus edit [--raw|--polish] [brief] — edit the active brief; choose raw text or AI polish",
   "/focus delete <id|title> — permanently delete a saved task",
-  "/focus clear — save the focused task and empty FOCUS_TASK.md",
+  "/focus clear — clear the focus without deleting the saved task",
   "/focus help — show this help",
 ].join("\n");
 const ACTIONS = ["init", "add", "switch", "list", "edit", "delete", "clear", "help"];
@@ -104,6 +104,14 @@ export default function focusTaskExtension(pi: ExtensionAPI) {
   }
 
   pi.on("session_shutdown", () => { disposed = true; polishing?.abort(); });
+  pi.on("before_agent_start", (event, ctx) => {
+    try {
+      const brief = focusedBrief(ctx.cwd);
+      if (brief) event.systemPromptOptions.contextFiles.push(brief);
+    } catch (error) {
+      report(ctx, error instanceof Error ? error.message : String(error), "warning");
+    }
+  });
 
   pi.registerCommand("focus", {
     description: "Manage project focus tasks: init, add, switch, list, edit, delete, clear",
@@ -123,9 +131,8 @@ export default function focusTaskExtension(pi: ExtensionAPI) {
         switch (action) {
           case "init": {
             const result = initProject(ctx.cwd);
-            const focus = result.migrated ? "Copied CURRENT_TASK.md to FOCUS_TASK.md; the original is unchanged."
-              : result.created ? "Created FOCUS_TASK.md (empty)." : "Kept existing FOCUS_TASK.md.";
-            report(ctx, `${focus}\n${result.agentsUpdated ? "Updated" : "Kept existing"} AGENTS.md focus guidance.\nUse /reload to refresh Pi's loaded project instructions.`);
+            report(ctx, result.migrated ? "Migrated old brief into private task storage; remove the old tracked file and its AGENTS.md read instruction yourself." :
+              result.legacy ? "Existing legacy brief left untouched; resolve it before creating a new focus." : "Private task storage ready; AGENTS.md unchanged.");
             break;
           }
           case "add": {
@@ -154,8 +161,8 @@ export default function focusTaskExtension(pi: ExtensionAPI) {
               query = tasks[options.indexOf(selected)]?.id ?? "";
             }
             requireIdle(ctx);
-            const { task, backup } = focusTask(ctx.cwd, findTask(tasks, query).id);
-            report(ctx, `Focused ${task.id.slice(0, 8)} — ${task.title}${backup ? `\nPrevious untracked FOCUS_TASK.md backed up to ${backup}` : ""}\nFor a clean conversation, use /new; the focus persists.`);
+            const { task } = focusTask(ctx.cwd, findTask(tasks, query).id);
+            report(ctx, `Focused ${task.id.slice(0, 8)} — ${task.title}\nFor a clean conversation, use /new; the focus persists.`);
             break;
           }
           case "list": {
@@ -166,7 +173,7 @@ export default function focusTaskExtension(pi: ExtensionAPI) {
           }
           case "edit": {
             const { mode, text } = draftOptions(argument);
-            if (!ctx.hasUI && !text && mode !== "polish") throw new Error("Edit FOCUS_TASK.md directly or use /focus edit --raw <brief> in non-interactive mode.");
+            if (!ctx.hasUI && !text && mode !== "polish") throw new Error("Edit the active .pi-focus-task/<id>.md or use /focus edit --raw <brief> in non-interactive mode.");
             const { active } = listTasks(ctx.cwd);
             if (!active) throw new Error("No managed focus task. Use /focus switch first.");
             const raw = text || (ctx.hasUI ? await ctx.ui.editor(`Task: ${active.title}`, active.body) : active.body);
@@ -175,12 +182,12 @@ export default function focusTaskExtension(pi: ExtensionAPI) {
             if (body === undefined || disposed) return;
             requireIdle(ctx);
             editTask(ctx.cwd, active, body);
-            report(ctx, "Updated FOCUS_TASK.md.");
+            report(ctx, "Updated focused task.");
             break;
           }
           case "clear": {
-            const { backup } = clearFocus(ctx.cwd);
-            report(ctx, `Focus cleared.${backup ? ` Previous unmanaged brief backed up to ${backup}` : ""}`);
+            clearFocus(ctx.cwd);
+            report(ctx, "Focus cleared; saved task retained.");
             break;
           }
           case "delete": {

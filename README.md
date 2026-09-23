@@ -1,203 +1,54 @@
 # pi-focus-task
 
-**Keep the task. Start a fresh session.**
-
-A small [Pi](https://pi.dev/) extension for long-running work. Save multiple task briefs, keep **one task in focus**, and resume it after a restart, a new session, or context compaction.
-
-Your task lives in plain Markdown—not just the conversation:
-
-| File | Purpose |
-| --- | --- |
-| `AGENTS.md` | Durable project knowledge and instructions. |
-| `FOCUS_TASK.md` | Only the active task description: scope, decisions, progress, and next step. An empty file means no active task. |
-| `.pi-focus-task/` | Saved tasks and the small internal marker for the selected task. |
-
-No database, background service, build step, or additional runtime dependency. AI polishing is optional; raw saves never call a model.
+Keep one project task in focus across Pi sessions and compaction without committing personal notes.
 
 ## Install
 
-Requires **Node.js 22.19+** and **Pi 0.86.1+** (`@earendil-works/pi-coding-agent`). Tested with Pi 0.86.1.
+Requires Node.js 22.19+ and Pi 0.86.1+.
 
 ```sh
 pi install git:github.com/spksoft/pi-focus-task
 ```
 
-Prefer SSH?
+Restart Pi or run `/reload`, then work in the project directory. For local development: `pi -e /absolute/path/to/pi-focus-task/index.ts`.
 
-```sh
-pi install git:git@github.com:spksoft/pi-focus-task.git
-```
-
-Restart Pi or run `/reload`, then open Pi in the **project folder** whose tasks you want to manage. Task paths are relative to Pi's working directory; the extension does not search parent repositories.
-
-For local development, install the checkout or try it for one session:
-
-```sh
-pi install /absolute/path/to/pi-focus-task
-# Or, without installing:
-pi -e /absolute/path/to/pi-focus-task/index.ts
-```
-
-## Quick start
-
-In your project, run:
+## Workflow
 
 ```text
 /focus init
-/reload
 /focus add --raw Implement authentication
 /focus switch Implement authentication
 /focus edit
-```
-
-Write the objective, scope, constraints, and next step. Choose **Save raw input** or **Polish with AI**, then work normally. You or the agent can also edit `FOCUS_TASK.md` directly.
-
-To work on something else:
-
-```text
-/focus add --raw Improve search
-/focus switch Improve search
 /new
 ```
 
-Switching saves the outgoing brief and restores the selected one. It does **not** clear the conversation; `/new` is recommended for unrelated work.
+`/focus init` adds `.pi-focus-task/` to the project's `.gitignore` and migrates an existing `FOCUS_TASK.md` or `CURRENT_TASK.md` brief if present. It never creates or edits `AGENTS.md` or a root-level task file. `/focus add` also updates `.gitignore`, so init is optional for new projects.
 
-When you return, your saved progress comes with you:
-
-```text
-/focus switch Implement authentication
-```
-
-Use `/focus clear` to save the focused brief and empty `FOCUS_TASK.md` without deleting the task. Use `/focus delete <id-or-title>` to permanently remove a task; deleting the focused task also empties `FOCUS_TASK.md`.
-
-## Commands
-
-Only `/focus` is registered; `/task` remains available to other extensions.
-
-| Command | What it does |
+| Command | Action |
 | --- | --- |
-| `/focus init` | Set up `AGENTS.md` and `FOCUS_TASK.md` without replacing existing briefs. Safe to repeat. |
-| `/focus` or `/focus list` | List saved tasks; `*` marks the active one. Shows up to 50 entries. |
-| `/focus add [--raw\|--polish] [brief]` | Create a task without changing focus. Omit the brief to open an editor. |
-| `/focus switch [id-or-title]` | Save the outgoing brief and switch tasks. Omit the selector for a picker. |
-| `/focus edit [--raw\|--polish] [brief]` | Edit the active brief, or replace it with supplied text. |
-| `/focus delete <id-or-title>` | Permanently delete a saved task; if focused, empty `FOCUS_TASK.md`. |
-| `/focus clear` | Save the focused brief and empty `FOCUS_TASK.md` without deleting the task. |
-| `/focus help` | Show command help. |
+| `/focus` or `/focus list` | Show saved tasks and focused task (`*`). |
+| `/focus init` | Configure private storage; migrate an old brief when no task is focused. |
+| `/focus add [--raw\|--polish] [brief]` | Save a new task; first line becomes its title. |
+| `/focus switch [id-or-title]` | Focus a saved task; use `/new` for a clean conversation. |
+| `/focus edit [--raw\|--polish] [brief]` | Update the focused brief. |
+| `/focus clear` | Remove focus without deleting the saved task. |
+| `/focus delete <id-or-title>` | Permanently delete a task. |
 
-- Select tasks by full UUID, unique ID prefix, or exact title (case-insensitive). Use an ID when titles are duplicated.
-- Creation derives the title from the first nonblank input line, removing a Markdown heading marker and keeping at most 200 Unicode characters. The body is not truncated.
-- Editing or polishing changes the body, not its title or identity. Tasks have no completion state.
-- Task-changing commands require Pi to be idle. Deletion asks for confirmation in interactive mode; in print/JSON mode the explicit selector is the confirmation. Canceling a dialog leaves files unchanged. The extension never switches or deletes tasks on its own.
+With no input, interactive add/edit opens an editor; with no mode flag it offers raw or AI polish. In non-interactive mode, raw is the default. Raw input is stored exactly, without a model call. AI polish sends only the supplied draft to the selected model, then offers review in UI mode; in non-interactive mode the completed output saves without preview. Requests time out after 60 seconds; input and output are limited to 16 KiB. Select a task by UUID, unique prefix, or exact title. Only explicit commands change focus.
 
-## Raw input or AI polish
-
-Creation and editing offer two choices:
-
-| Mode | Behavior |
-| --- | --- |
-| **Save raw input** | Preserve the supplied body exactly, including whitespace and line endings. No template, reformatting, or model call. |
-| **Polish with AI** | Ask the selected Pi model to clarify and organize the brief, then review and edit the draft before saving. |
-
-Use a flag to choose directly:
+## Private storage and prompt behavior
 
 ```text
-/focus add --raw Implement authentication
-/focus add --polish Fix login timeout; keep existing sessions compatible
-/focus edit --raw
-/focus edit --polish
+project/.pi-focus-task/
+├── .active           # selected task identity
+└── <task-uuid>.md   # editable Markdown brief (metadata comment on first line)
 ```
 
-Both commands accept multiline input. Without input, interactive creation opens a blank editor and editing opens the active brief. The first whitespace character after the command or flag is a separator; the remaining body is preserved in raw mode. For text beginning with `--`, use a separator: `/focus add --raw -- --polish is literal task text`.
+Edit the focused task file directly, or use `/focus edit`. Briefs should contain scope, constraints, decisions, progress, and the next step. There is no required Markdown schema. The brief is read from disk at the start of each agent run and appended **after `AGENTS.md` in Pi's project-context system-prompt section**; it is not sent as a separate user message on every model call. Compaction and fresh sessions retain that section. Switching focus mid-conversation does not remove earlier conversation references to the old task: use `/new` when switching unrelated work. No focus means no added prompt section.
 
-**Polishing is opt-in and may incur model charges.** Only the supplied brief is sent—not conversation history, other tasks, or project files. The prompt asks the model to preserve language, intent, constraints, and known facts without inventing scope or completed work. Review the result; these instructions are not a correctness guarantee.
+The extension creates or preserves the project's `.gitignore`, adding `.pi-focus-task/` once. It never reads or writes `.git/info/exclude`. This `.gitignore` change can be committed; task files remain ignored. It does **not** untrack files already in Git: if you previously committed `FOCUS_TASK.md`, `.pi-focus-task/` files, or a focus instruction in `AGENTS.md`, remove them from Git yourself. Migration leaves legacy files unchanged to prevent data loss. Other VCS tools may require their own ignore rules. Do not store secrets in briefs: they enter model requests and may appear in Pi session history.
 
-Polishing accepts up to **16 KiB UTF-8** of input and output, with a **60-second** request deadline. Cancel the in-progress dialog to abort. Failures leave files unchanged and, in interactive mode, offer to save the original draft instead. Closing or switching the Pi session cancels an in-flight request.
-
-## Project setup and migration
-
-`/focus init` creates an empty `FOCUS_TASK.md` (no active task), unless it already exists, and adds this instruction to `AGENTS.md`:
-
-> Before starting work, read FOCUS_TASK.md for the active scope and constraints.
-
-Existing project instructions and briefs are preserved. Repeated initialization does not duplicate the instruction. Only explicit initialization edits `AGENTS.md`; startup and ordinary task commands do not. Run `/reload` afterward to refresh Pi's loaded instructions.
-
-Migrating from `CURRENT_TASK.md`:
-
-- If the new file is absent, initialization copies the legacy brief to `FOCUS_TASK.md`, moves any old identity metadata into `.pi-focus-task/.active`, and updates filename references in `AGENTS.md`.
-- The original stays untouched as a backup. If both files exist, `FOCUS_TASK.md` wins and neither brief is overwritten.
-- Until migration, listing and switching ask you to run `/focus init` rather than ignore legacy progress. Saved tasks in `.pi-focus-task/` need no migration.
-
-After checking the migration, archive or remove the old file yourself. Only `FOCUS_TASK.md` is used going forward.
-
-## Storage and direct editing
-
-```text
-project/
-├── AGENTS.md
-├── FOCUS_TASK.md                    # active task description only; empty = no focus
-└── .pi-focus-task/
-    ├── .active                       # selected saved task identity (internal)
-    ├── <task-uuid>.md               # saved task briefs
-    └── backups/<backup-uuid>.md     # previous unmanaged focus files
-```
-
-`FOCUS_TASK.md` contains ordinary Markdown only—no identity comment, status heading, template, or required schema:
-
-```markdown
-# Authentication
-
-## Objective
-Allow users to sign in.
-
-## Next step
-Test expired tokens.
-```
-
-While a task is active, edit `FOCUS_TASK.md`, not its saved copy. The extension keeps the selected saved-task identity in `.pi-focus-task/.active` and updates its saved copy when switching or clearing. Saved tasks contain no completion state. The body has no required headings; keep only what is needed to resume work.
-
-A completely empty `FOCUS_TASK.md` means no active focus. A hand-written nonempty file also works without importing it. Switching or clearing backs up an unmanaged brief under `backups/` and reports the path. Delete never erases an unmanaged brief. To restore a backup, copy it to `FOCUS_TASK.md` when no managed task is focused.
-
-### Privacy and version control
-
-Choose whether task files belong in Git. For private local notes, add these entries to your project's `.gitignore`:
-
-```gitignore
-.pi-focus-task/
-FOCUS_TASK.md
-```
-
-**Do not store secrets in briefs.** An agent following `AGENTS.md` may read the brief, and AI polishing sends the supplied draft to the selected model. Markdown remains readable by humans and other coding harnesses without the extension.
-
-## Safety
-
-- The extension never injects model messages or prompt sections. `AGENTS.md` tells the agent to read `FOCUS_TASK.md` when starting work; `/focus init` adds that instruction once.
-- Rejects files over **256 KiB**, malformed saved-task metadata or active markers, unsafe IDs, and symlinked task paths. Initialization also bounds `AGENTS.md` to 256 KiB.
-- Allows ordinary Pi use without an active task; file-operation errors are reported without replacing files.
-
-**Use one active writer per project.** Commands use a short-lived `.pi-focus-task/.lock` directory and atomic replacement, but external editors do not honor that lock. Edits are checked against the original brief before saving to avoid overwriting newer work.
-
-If a process crashes while holding the lock, stop all writers, inspect the task files, then remove the empty lock directory. Inspect leftover `.tmp` files before deleting them. Atomic renames prevent partial replacements, not data loss from hardware or power failures.
-
-## Non-interactive use
-
-Print and JSON modes support commands with explicit arguments:
-
-```sh
-pi -p '/focus init'
-pi -p '/focus add --raw Investigate timeout'
-pi -p '/focus switch Investigate timeout'
-pi -p '/focus edit --raw Check the retry deadline and preserve existing behavior.'
-pi -p '/focus list'
-pi -p '/focus clear'
-pi -p '/focus delete Investigate timeout'
-```
-
-Without a mode flag, non-interactive creation/editing defaults to raw input. You can also edit `FOCUS_TASK.md` with normal file tools.
-
-**Explicit `--polish` saves without a preview in non-interactive modes.** `/focus edit --polish` polishes the existing active brief when no replacement text is supplied. A failed model request saves nothing.
-
-Command results go to stderr, leaving stdout's Pi output format intact. RPC clients can use standard select/editor dialogs if they implement Pi's extension UI protocol.
+Files over 256 KiB, unsafe paths, and malformed markers are rejected. Focus prompts over 16 KiB are skipped with a warning rather than truncated. Task commands use a short-lived `.pi-focus-task/.lock` and atomic writes; use one active writer per project. Only focused task edits are checked against the previous body before saving.
 
 ## Development
 
@@ -205,11 +56,6 @@ Command results go to stderr, leaving stdout's Pi output format intact. RPC clie
 npm ci
 npm run check
 npm test
-npm pack --dry-run
 ```
 
-- `index.ts` — commands and authoring dialogs.
-- `store.ts` — initialization, Markdown persistence, transitions, and validation.
-- `test/focus-task.test.ts` — storage, authoring, command, and integration checks.
-
-Tests use Node's built-in runner, temporary projects, an isolated real Pi CLI, and a loopback-only model stub. They check command behavior and AI-polish requests without provider credentials or changes to your Pi settings.
+`index.ts` implements Pi commands and prompt integration; `store.ts` implements task persistence. Tests use Node's built-in runner and a local model stub.

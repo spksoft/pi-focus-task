@@ -7,10 +7,8 @@ import { dirname, join } from "node:path";
 
 export const MAX_FILE_BYTES = 256 * 1024;
 export const MAX_CONTEXT_BYTES = 16 * 1024;
-export const NO_TASK = "";
 const OLD_NO_TASK = "# Focus Task\n\nNo active task.\n";
 const LEGACY_NO_TASK = "# Current Task\n\nNo active task.\n";
-const AGENTS_RULE = "Before starting work, read FOCUS_TASK.md for the active scope and constraints.";
 const ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const PREFIX = "<!-- pi-focus-task: ";
 const ACTIVE = ".active";
@@ -22,7 +20,7 @@ type LegacyTask = Task & { status?: "open" | "done" };
 function paths(cwd: string) {
   const root = realpathSync(cwd);
   const dir = join(root, ".pi-focus-task");
-  return { dir, current: join(root, "FOCUS_TASK.md"), active: join(dir, ACTIVE) };
+  return { dir, active: join(dir, ACTIVE) };
 }
 
 function stat(path: string) {
@@ -126,22 +124,27 @@ function noTask(text: string | undefined) {
   return text === undefined || !text.trim() || text === OLD_NO_TASK || text === LEGACY_NO_TASK;
 }
 
-function readCurrent(current: string, activePath: string) {
-  const text = read(current);
-  if (text === undefined && stat(join(dirname(current), "CURRENT_TASK.md"))) {
-    throw new Error("Found CURRENT_TASK.md. Run /focus init to migrate its context to FOCUS_TASK.md first.");
-  }
-  if (noTask(text)) return { text, task: undefined };
-  if (text!.startsWith("<!-- pi-focus-task")) {
-    throw new Error("FOCUS_TASK.md still has old task metadata. Run /focus init to move it into .pi-focus-task/.");
-  }
+function readFocused(dir: string, activePath: string): Task | undefined {
   const active = readActive(activePath);
-  if (!active) return { text, task: undefined };
-  return { text, task: { ...active, body: text! } };
+  if (!active) return undefined;
+  const path = taskPath(dir, active.id);
+  const saved = decode(read(path) ?? "", path);
+  if (!saved || saved.id !== active.id || saved.title !== active.title) throw new Error(`Invalid focused task: ${path}`);
+  return { id: saved.id, title: saved.title, body: saved.body };
 }
 
-function locked<T>(cwd: string, action: (dir: string, current: string, active: string) => T): T {
-  const { dir, current, active } = paths(cwd);
+export function focusedBrief(cwd: string): { path: string; content: string } | undefined {
+  const { dir, active } = paths(cwd);
+  if (!directory(dir)) return undefined;
+  requireMigration(dir);
+  const task = readFocused(dir, active);
+  if (!task?.body.trim()) return undefined;
+  if (Buffer.byteLength(task.body) > MAX_CONTEXT_BYTES) throw new Error("Focused brief exceeds 16 KiB; shorten it before using it as model context.");
+  return { path: taskPath(dir, task.id), content: task.body };
+}
+
+function locked<T>(cwd: string, action: (dir: string, active: string) => T): T {
+  const { dir, active } = paths(cwd);
   directory(dir, true);
   const lock = join(dir, ".lock");
   try { mkdirSync(lock); }
@@ -151,50 +154,46 @@ function locked<T>(cwd: string, action: (dir: string, current: string, active: s
     }
     throw error;
   }
-  try { return action(dir, current, active); }
+  try { return action(dir, active); }
   finally { rmdirSync(lock); }
 }
 
-export function initProject(cwd: string) {
-  return locked(cwd, (dir, current, active) => {
-    const agentsPath = join(dirname(current), "AGENTS.md");
-    const agents = read(agentsPath);
-    let instructions = (agents ?? "").replaceAll("CURRENT_TASK.md", "FOCUS_TASK.md");
-    if (!instructions.includes(AGENTS_RULE)) {
-      const separator = instructions ? (instructions.endsWith("\n") ? "\n" : "\n\n") : "";
-      instructions += `${separator}## Focus task context\n\n${AGENTS_RULE}\n`;
-    }
-    const existing = read(current);
-    const legacy = existing === undefined ? read(join(dirname(current), "CURRENT_TASK.md")) : undefined;
-    const source = existing ?? legacy;
-    const sourcePath = existing === undefined && legacy !== undefined ? join(dirname(current), "CURRENT_TASK.md") : current;
-    const oldTask = source === undefined ? undefined : decode(source, sourcePath);
-    if (Buffer.byteLength(instructions) > MAX_FILE_BYTES) throw new Error("AGENTS.md would exceed 256 KiB; shorten it before initialization.");
+function ignoreTasks(root: string) {
+  const path = join(root, ".gitignore");
+  const contents = read(path) ?? "";
+  if (contents.split(/\r?\n/).some(line => line === ".pi-focus-task/" || line === "/.pi-focus-task/")) return;
+  atomicWrite(path, `${contents}${contents && !contents.endsWith("\n") ? "\n" : ""}.pi-focus-task/\n`);
+}
 
-    if (oldTask) {
-      atomicWrite(taskPath(dir, oldTask.id), encode(oldTask));
-      if (oldTask.status !== "done") {
-        atomicWrite(current, oldTask.body);
-        writeActive(active, oldTask);
-      } else {
-        atomicWrite(current, NO_TASK);
-        clearActive(active);
-      }
-    } else {
-      const body = noTask(source) ? NO_TASK : source!;
-      if (existing === undefined || body !== existing) atomicWrite(current, body);
-      if (noTask(body)) clearActive(active);
+export function initProject(cwd: string) {
+  return locked(cwd, (dir, active) => {
+    const root = dirname(dir);
+    ignoreTasks(root);
+    const old = join(root, "FOCUS_TASK.md");
+    const source = read(old) ?? read(join(root, "CURRENT_TASK.md"));
+    const activeTask = readFocused(dir, active);
+    if (noTask(source) || read(join(dir, ".migrated")) !== undefined) return { migrated: false, legacy: !!source?.trim() };
+    const legacy = decode(source!, read(old) !== undefined ? old : join(root, "CURRENT_TASK.md"));
+    if (activeTask && legacy?.id && legacy.id !== activeTask.id) throw new Error("Legacy brief belongs to another task; resolve it manually before migrating.");
+    const task = activeTask ? { ...activeTask, body: legacy?.body ?? source! }
+      : legacy && legacy.status !== "done" ? { id: legacy.id, title: legacy.title, body: legacy.body }
+      : legacy ? undefined : { id: randomUUID(), title: validateTitle(source!.trimStart().split(/\r?\n/, 1)[0].replace(/^#{1,6}\s+/, "").slice(0, 200)), body: source! };
+    if (task) {
+      const path = taskPath(dir, task.id);
+      if (!activeTask && read(path) !== undefined) throw new Error(`Task ${task.id} already exists; resolve the legacy file manually before migrating.`);
+      atomicWrite(path, encode(task));
+      writeActive(active, task);
     }
-    if (instructions !== agents) atomicWrite(agentsPath, instructions);
-    return { migrated: legacy !== undefined, created: existing === undefined, agentsUpdated: instructions !== agents };
+    atomicWrite(join(dir, ".migrated"), "Migrated legacy focus; remove its tracked file manually.\n");
+    return { migrated: !!task, legacy: true }; // Leave tracked legacy files for the user to remove explicitly.
   });
 }
 
 export function listTasks(cwd: string): { tasks: Task[]; active?: Task } {
-  const { dir, current, active: activePath } = paths(cwd);
+  const { dir, active: activePath } = paths(cwd);
   const exists = directory(dir);
   if (exists && stat(join(dir, ".lock"))) throw new Error("A task operation is in progress; try again shortly.");
-  const { task: active } = readCurrent(current, activePath);
+  const active = exists ? readFocused(dir, activePath) : undefined;
   // ponytail: scan small local task lists; add an index only if thousands of tasks make this slow.
   const tasks = exists ? readdirSync(dir).filter(name => ID.test(name.slice(0, -3)) && name.endsWith(".md")).map(name => {
     const path = join(dir, name);
@@ -202,11 +201,6 @@ export function listTasks(cwd: string): { tasks: Task[]; active?: Task } {
     if (!task || `${task.id}.md` !== name) throw new Error(`Invalid task file: ${path}`);
     return { id: task.id, title: task.title, body: task.body };
   }) : [];
-  if (active) {
-    const index = tasks.findIndex(task => task.id === active.id);
-    if (index < 0) tasks.push(active);
-    else tasks[index] = active; // FOCUS_TASK.md is authoritative while focused.
-  }
   tasks.sort((a, b) => a.title.localeCompare(b.title) || a.id.localeCompare(b.id));
   return { tasks, active };
 }
@@ -214,6 +208,7 @@ export function listTasks(cwd: string): { tasks: Task[]; active?: Task } {
 export function addTask(cwd: string, title: string, body?: string): Task {
   title = validateTitle(title);
   return locked(cwd, dir => {
+    ignoreTasks(dirname(dir));
     const task: Task = {
       id: randomUUID(), title,
       body: body ?? `# ${title}\n\n## Objective\n${title}\n\n## Scope and constraints\n\n## Decisions\n\n## Progress and validation\n\n## Blockers\n\n## Next step\n`,
@@ -233,66 +228,57 @@ export function findTask(tasks: Task[], query: string): Task {
   return matches[0];
 }
 
-function preserve(dir: string, text: string | undefined, task: Task | undefined) {
-  if (task) atomicWrite(taskPath(dir, task.id), encode(task));
-  else if (text?.trim()) {
-    const backups = join(dir, "backups");
-    directory(backups, true);
-    const path = join(backups, `${randomUUID()}.md`);
-    writeFileSync(path, text, { flag: "wx", mode: 0o600 });
-    return path;
+function requireMigration(dir: string) {
+  if (read(join(dir, ".migrated")) !== undefined) return;
+  const root = dirname(dir);
+  if (!noTask(read(join(root, "FOCUS_TASK.md")) ?? read(join(root, "CURRENT_TASK.md")))) {
+    throw new Error("Legacy task brief found. Run /focus init before changing focus to preserve its contents.");
   }
-  return undefined;
 }
 
-export function focusTask(cwd: string, id: string): { task: Task; backup?: string } {
-  return locked(cwd, (dir, current, activePath) => {
-    const { text, task: previous } = readCurrent(current, activePath);
+export function focusTask(cwd: string, id: string): { task: Task } {
+  return locked(cwd, (dir, activePath) => {
+    requireMigration(dir);
+    const previous = readFocused(dir, activePath);
     if (previous?.id === id) return { task: previous };
     const path = taskPath(dir, id);
     const saved = decode(read(path) ?? "", path);
     if (!saved || saved.id !== id) throw new Error(`Task not found or invalid: ${id}`);
     const task: Task = { id: saved.id, title: saved.title, body: saved.body };
-    const backup = preserve(dir, text, previous);
-    atomicWrite(current, task.body);
     writeActive(activePath, task);
-    return { task, backup };
+    return { task };
   });
 }
 
-export function clearFocus(cwd: string): { backup?: string } {
-  return locked(cwd, (dir, current, activePath) => {
-    const { text, task } = readCurrent(current, activePath);
-    readActive(activePath); // Validate before changing the brief.
-    const backup = preserve(dir, noTask(text) ? undefined : text, task);
-    if (text !== NO_TASK) atomicWrite(current, NO_TASK);
+export function clearFocus(cwd: string) {
+  locked(cwd, (dir, activePath) => {
+    requireMigration(dir);
+    readFocused(dir, activePath);
     clearActive(activePath);
-    return { backup };
   });
 }
 
 export function deleteTask(cwd: string, id: string): Task {
-  return locked(cwd, (dir, current, activePath) => {
-    const { task: active } = readCurrent(current, activePath);
+  return locked(cwd, (dir, activePath) => {
+    requireMigration(dir);
+    const active = readFocused(dir, activePath);
     const path = taskPath(dir, id);
     const saved = decode(read(path) ?? "", path);
     if (!saved || saved.id !== id) throw new Error(`Task not found or invalid: ${id}`);
-    const task: Task = { id: saved.id, title: saved.title, body: active?.id === id ? active.body : saved.body };
-    if (readActive(activePath)?.id === id) {
-      if (active) atomicWrite(current, NO_TASK);
-      clearActive(activePath);
-    }
+    const task: Task = { id: saved.id, title: saved.title, body: saved.body };
+    if (active?.id === id) clearActive(activePath);
     unlinkSync(path);
     return task;
   });
 }
 
 export function editTask(cwd: string, expected: Task, body: string) {
-  return locked(cwd, (dir, current, activePath) => {
-    const { text, task } = readCurrent(current, activePath);
-    if (!task || task.id !== expected.id || text !== expected.body) {
+  return locked(cwd, (dir, activePath) => {
+    requireMigration(dir);
+    const task = readFocused(dir, activePath);
+    if (!task || task.id !== expected.id || task.body !== expected.body) {
       throw new Error("Focus or task contents changed while editing. Reopen /focus edit; no changes were overwritten.");
     }
-    atomicWrite(current, body);
+    atomicWrite(taskPath(dir, task.id), encode({ ...task, body }));
   });
 }
