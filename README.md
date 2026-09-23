@@ -68,7 +68,7 @@ When you return, your saved progress comes with you:
 /focus switch Implement authentication
 ```
 
-Use `/focus delete <id-or-title>` to permanently remove a task. Deleting the focused task also empties `FOCUS_TASK.md`.
+Use `/focus clear` to save the focused brief and empty `FOCUS_TASK.md` without deleting the task. Use `/focus delete <id-or-title>` to permanently remove a task; deleting the focused task also empties `FOCUS_TASK.md`.
 
 ## Commands
 
@@ -81,7 +81,8 @@ Only `/focus` is registered; `/task` remains available to other extensions.
 | `/focus add [--raw\|--polish] [brief]` | Create a task without changing focus. Omit the brief to open an editor. |
 | `/focus switch [id-or-title]` | Save the outgoing brief and switch tasks. Omit the selector for a picker. |
 | `/focus edit [--raw\|--polish] [brief]` | Edit the active brief, or replace it with supplied text. |
-| `/focus delete <id-or-title>` | Permanently delete a saved task; if focused, clear `FOCUS_TASK.md`. |
+| `/focus delete <id-or-title>` | Permanently delete a saved task; if focused, empty `FOCUS_TASK.md`. |
+| `/focus clear` | Save the focused brief and empty `FOCUS_TASK.md` without deleting the task. |
 | `/focus help` | Show command help. |
 
 - Select tasks by full UUID, unique ID prefix, or exact title (case-insensitive). Use an ID when titles are duplicated.
@@ -153,9 +154,9 @@ Allow users to sign in.
 Test expired tokens.
 ```
 
-While a task is active, edit `FOCUS_TASK.md`, not its saved copy. The extension keeps the selected saved-task identity in `.pi-focus-task/.active` and updates its saved copy when switching. Saved tasks contain no completion state. The body has no required headings; keep only what is needed to resume work.
+While a task is active, edit `FOCUS_TASK.md`, not its saved copy. The extension keeps the selected saved-task identity in `.pi-focus-task/.active` and updates its saved copy when switching or clearing. Saved tasks contain no completion state. The body has no required headings; keep only what is needed to resume work.
 
-A completely empty `FOCUS_TASK.md` means no active focus. A hand-written nonempty file also works without importing it. The first explicit switch backs it up under `backups/` and reports the path. Delete never erases an unmanaged brief. To restore a backup, copy it to `FOCUS_TASK.md` when no managed task is focused.
+A completely empty `FOCUS_TASK.md` means no active focus. A hand-written nonempty file also works without importing it. Switching or clearing backs up an unmanaged brief under `backups/` and reports the path. Delete never erases an unmanaged brief. To restore a backup, copy it to `FOCUS_TASK.md` when no managed task is focused.
 
 ### Privacy and version control
 
@@ -188,6 +189,7 @@ pi -p '/focus add --raw Investigate timeout'
 pi -p '/focus switch Investigate timeout'
 pi -p '/focus edit --raw Check the retry deadline and preserve existing behavior.'
 pi -p '/focus list'
+pi -p '/focus clear'
 pi -p '/focus delete Investigate timeout'
 ```
 

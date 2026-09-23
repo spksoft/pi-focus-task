@@ -50,7 +50,7 @@ The first useful version should:
 
 1. Provide `/focus init` to create `FOCUS_TASK.md` and idempotently add its read instruction to `AGENTS.md`, preserving existing content. Read the project-local `FOCUS_TASK.md`.
 2. Tell the agent in `AGENTS.md` to read `FOCUS_TASK.md` before work begins; do not inject task messages or prompt sections.
-3. Provide a small, explicit workflow to add, inspect, edit, switch, or delete a focus task. Tasks have no completion state.
+3. Provide a small, explicit workflow to add, inspect, edit, switch, clear, or delete a focus task. Clearing saves the task and empties `FOCUS_TASK.md` without assigning a completion state.
 4. Preserve the task in `FOCUS_TASK.md` across new sessions and Pi compaction.
 5. Keep the file directly editable and understandable without the extension.
 6. Fail clearly on missing, unreadable, or oversized task context without blocking unrelated Pi usage.

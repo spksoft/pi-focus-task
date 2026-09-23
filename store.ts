@@ -260,6 +260,17 @@ export function focusTask(cwd: string, id: string): { task: Task; backup?: strin
   });
 }
 
+export function clearFocus(cwd: string): { backup?: string } {
+  return locked(cwd, (dir, current, activePath) => {
+    const { text, task } = readCurrent(current, activePath);
+    readActive(activePath); // Validate before changing the brief.
+    const backup = preserve(dir, noTask(text) ? undefined : text, task);
+    if (text !== NO_TASK) atomicWrite(current, NO_TASK);
+    clearActive(activePath);
+    return { backup };
+  });
+}
+
 export function deleteTask(cwd: string, id: string): Task {
   return locked(cwd, (dir, current, activePath) => {
     const { task: active } = readCurrent(current, activePath);

@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 import { test, type TestContext } from "node:test";
 import type { ExtensionAPI, ExtensionCommandContext, RegisteredCommand } from "@earendil-works/pi-coding-agent";
 import extension from "../index.ts";
-import { addTask, deleteTask, editTask, findTask, focusTask, initProject, listTasks, MAX_CONTEXT_BYTES, MAX_FILE_BYTES, NO_TASK } from "../store.ts";
+import { addTask, clearFocus, deleteTask, editTask, findTask, focusTask, initProject, listTasks, MAX_CONTEXT_BYTES, MAX_FILE_BYTES, NO_TASK } from "../store.ts";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -363,6 +363,31 @@ test("switch, edit, restart and delete preserve other Markdown", t => {
   assert.equal(existsSync(join(cwd, ".pi-focus-task", ".active")), false);
 });
 
+test("clear saves focused edits, backs up unmanaged briefs, and empties FOCUS_TASK.md", t => {
+  const cwd = project(t);
+  const task = addTask(cwd, "Keep saved", "# Original\n");
+  focusTask(cwd, task.id);
+  saveCurrent(cwd, "# Updated directly\n");
+  assert.deepEqual(clearFocus(cwd), { backup: undefined });
+  assert.equal(current(cwd), "");
+  assert.equal(listTasks(cwd).active, undefined);
+  assert.equal(listTasks(cwd).tasks[0].body, "# Updated directly\n");
+  assert.equal(existsSync(join(cwd, ".pi-focus-task", ".active")), false);
+  focusTask(cwd, task.id);
+  assert.equal(current(cwd), "# Updated directly\n");
+  deleteTask(cwd, task.id);
+  saveCurrent(cwd, "# Hand-written brief\n");
+  const { backup } = clearFocus(cwd);
+  assert.ok(backup);
+  assert.equal(readFileSync(backup, "utf8"), "# Hand-written brief\n");
+  assert.equal(current(cwd), "");
+  assert.deepEqual(clearFocus(cwd), { backup: undefined });
+  assert.equal(readdirSync(dirname(backup)).length, 1);
+  const fresh = project(t);
+  clearFocus(fresh);
+  assert.equal(current(fresh), "");
+});
+
 test("an empty FOCUS_TASK.md means no active focus", t => {
   const cwd = project(t);
   const task = addTask(cwd, "Keep saved", "# Keep saved\n");
@@ -411,6 +436,7 @@ test("invalid metadata, symlinks, locks and failed saves do not replace active c
   assert.equal(readFileSync(outside, "utf8"), "untouched");
   assert.equal(current(cwd), before);
   assert.throws(() => deleteTask(cwd, a.id), /regular file/);
+  assert.throws(() => clearFocus(cwd), /non-regular/);
   assert.equal(current(cwd), before);
   rmSync(archived);
   mkdirSync(join(cwd, ".pi-focus-task", ".lock"));
@@ -423,6 +449,8 @@ test("invalid metadata, symlinks, locks and failed saves do not replace active c
   saveCurrent(cwd, before);
   writeFileSync(join(cwd, ".pi-focus-task", ".active"), '{"id":"../../escape"}\n');
   assert.throws(() => deleteTask(cwd, a.id), /Invalid active-task marker/);
+  assert.throws(() => clearFocus(cwd), /Invalid active-task marker/);
+  assert.equal(current(cwd), before);
   const other = project(t);
   symlinkSync(join(cwd, ".pi-focus-task"), join(other, ".pi-focus-task"));
   assert.throws(() => addTask(other, "Cross-project"), /real directory/);
@@ -505,6 +533,14 @@ test("commands support pickers, cancel, editing, deletion and busy guards", asyn
   assert.match(h.notices.at(-1)!, /Wait for Pi/);
   assert.doesNotMatch(current(cwd), /should not save/);
   h.busy(false);
+  await h.run("clear extra");
+  assert.match(h.notices.at(-1)!, /does not accept/);
+  await h.run("clear");
+  assert.match(h.notices.at(-1)!, /Focus cleared/);
+  assert.equal(current(cwd), "");
+  assert.equal(listTasks(cwd).active, undefined);
+  await h.run("switch Second task");
+  assert.match(current(cwd), /Edited/);
   h.ctx.ui.select = async () => "Cancel";
   await h.run("delete Second task");
   assert.equal(listTasks(cwd).active?.title, "Second task");
@@ -563,6 +599,10 @@ test("real Pi CLI coexists with /task and persists focus lifecycle across proces
   command("/focus switch Feature A");
   assert.match(current(cwd), /Runtime handoff checkpoint/);
   assert.match(command("/focus list"), /\* .*Feature A/);
+  assert.match(command("/focus clear"), /Focus cleared/);
+  assert.equal(current(cwd), NO_TASK);
+  assert.match(command("/focus switch Feature A"), /Focused/);
+  assert.match(current(cwd), /Runtime handoff checkpoint/);
   assert.match(command("/focus delete Feature A"), /Deleted/);
   assert.equal(current(cwd), NO_TASK);
   assert.doesNotMatch(command("/focus list"), /Feature A/);
